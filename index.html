@@ -7976,7 +7976,7 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 /* ===== /CONTROL DE EXPERIENCIA MÓVIL v43 ===== */
 
 /* ===== NAVEGACIÓN JERÁRQUICA Y CONTINUIDAD v44 ===== */
-const CC44_NAV={initialized:false,restoring:false,scheduled:0,currentRoute:null,currentKey:'',lastNonOverlay:null,notice:'',draftPrefix:'codigoCriticoNavDraftV44:'};
+const CC44_NAV={initialized:false,restoring:false,scheduled:0,currentRoute:null,currentKey:'',lastNonOverlay:null,notice:'',draftPrefix:'codigoCriticoNavDraftV44:',trail:[],depth:0};
 
 function cc44Clone(value){try{return JSON.parse(JSON.stringify(value))}catch(e){return null}}
 function cc44Shown(el){return!!el&&el.isConnected&&!el.classList.contains('hidden')&&getComputedStyle(el).display!=='none'}
@@ -8027,6 +8027,39 @@ function cc44RouteKey(route){
  if(route.type==='study-section')return`${route.type}:${route.tab||''}`;
  if(route.type==='guard-patient')return`${route.type}:${route.patientId||''}`;
  return route.type;
+}
+function cc44TrailSave(){try{sessionStorage.setItem(CC44_NAV.draftPrefix+'trail',JSON.stringify(CC44_NAV.trail.slice(-80)))}catch(e){}}
+function cc44TrailReset(route){CC44_NAV.trail=route?[cc44Clone(route)]:[];cc44TrailSave()}
+function cc44TrailPush(route){
+ route=cc44DraftRoute(route);if(!route)return;
+ const key=cc44RouteKey(route),last=CC44_NAV.trail.at(-1);if(last&&cc44RouteKey(last)===key)return;
+ CC44_NAV.trail.push(cc44Clone(route));if(CC44_NAV.trail.length>80)CC44_NAV.trail.splice(0,CC44_NAV.trail.length-80);cc44TrailSave();
+}
+function cc44ParentRoute(route){
+ if(!route)return{type:'intro'};if(route.type==='overlay')return route.parent||{type:'intro'};
+ if(route.type==='guard-patient')return{type:'guard-room'};
+ if(route.type==='guard-room'){
+  const topic=game?.studyTopicId,area=topic&&findStudyAreaOfTopic?.(topic);return topic&&area?{type:'study-topic',area,topic}:{type:'mode'};
+ }
+ if(route.type==='debrief'){
+  const topic=game?.studyTopicId,area=topic&&findStudyAreaOfTopic?.(topic);return topic&&area?{type:'study-topic',area,topic}:{type:'mode'};
+ }
+ if(route.type==='study-item')return{type:'study-topic',area:route.area,topic:route.topic};
+ if(route.type==='study-topic')return{type:'study-world',area:route.area};
+ if(route.type==='study-world'||route.type==='exam-center'||route.type==='study-section')return{type:'study-map'};
+ if(route.type==='boss')return{type:'study-world',area:route.area};
+ if(route.type==='exam-active')return{type:'exam-center'};
+ if(route.type==='mode'||route.type==='study-map')return{type:'intro'};
+ return null;
+}
+function cc44TrailBack(current){
+ const currentKey=cc44RouteKey(current);
+ while(CC44_NAV.trail.length&&cc44RouteKey(CC44_NAV.trail.at(-1))===currentKey)CC44_NAV.trail.pop();
+ const target=CC44_NAV.trail.at(-1)||cc44ParentRoute(current);cc44TrailSave();return target?cc44Clone(target):null;
+}
+function cc44CommitHistoryRoute(route,depth=Math.max(0,CC44_NAV.depth-1),scrollPosition=0){
+ CC44_NAV.depth=Math.max(0,Number(depth)||0);
+ try{history.replaceState({cc44:true,depth:CC44_NAV.depth,route:cc44Clone(route),scrollY:Math.max(0,Number(scrollPosition)||0)},'',location.href)}catch(e){}
 }
 function cc44DraftRoute(route){return route?.type==='overlay'?route.parent:route}
 function cc44WriteDraft(route=CC44_NAV.currentRoute){
@@ -8132,8 +8165,10 @@ function cc44ObserveRoute(){
  CC44_NAV.scheduled=0;if(!CC44_NAV.initialized||CC44_NAV.restoring)return;
  const route=cc44Route(),key=cc44RouteKey(route);cc44SyncControls();if(key===CC44_NAV.currentKey){cc44UpdateHistoryState();return}
  if(CC44_NAV.currentRoute?.type==='overlay'&&key===cc44RouteKey(CC44_NAV.currentRoute.parent)){
-  CC44_NAV.restoring=true;try{history.back()}catch(e){CC44_NAV.restoring=false}return;
+  const depth=Math.max(0,(Number(history.state?.depth)||CC44_NAV.depth)-1);cc44CommitHistoryRoute(route,depth,scrollY);
+  CC44_NAV.currentRoute=route;CC44_NAV.currentKey=key;CC44_NAV.lastNonOverlay=route;cc44WriteDraft(route);return;
  }
+ if(route.type!=='overlay')cc44TrailPush(route);
  cc44WriteDraft(CC44_NAV.currentRoute);let depth=Number(history.state?.depth)||0;
  try{
   const switchingStudyItem=route.type==='study-item'&&CC44_NAV.currentRoute?.type==='study-item';
@@ -8154,12 +8189,14 @@ function cc44ObserveRoute(){
   }
   history.pushState({cc44:true,depth:++depth,route,scrollY:Math.max(0,Math.round(scrollY||0))},'',location.href);
  }catch(e){}
+ CC44_NAV.depth=depth;
  CC44_NAV.currentRoute=route;CC44_NAV.currentKey=key;if(route.type!=='overlay')CC44_NAV.lastNonOverlay=route;cc44WriteDraft(route);
 }
 function cc44ScheduleRoute(){if(!CC44_NAV.scheduled)CC44_NAV.scheduled=requestAnimationFrame(cc44ObserveRoute)}
 function cc44FallbackBack(route=cc44UnderlyingRoute()){
  if(route.type==='guard-patient')openRoom();
- else if(route.type==='guard-room'||route.type==='mode'||route.type==='study-map')showScreen('introScreen');
+ else if(route.type==='guard-room')showScreen('modeScreen');
+ else if(route.type==='mode'||route.type==='study-map')showScreen('introScreen');
  else if(route.type==='study-world'){CC24.tab='worlds';renderStudyHome()}
  else if(route.type==='study-topic')openStudyArea(route.area);
  else if(route.type==='study-item')openStudyTopic(route.area,route.topic);
@@ -8170,12 +8207,13 @@ function cc44FallbackBack(route=cc44UnderlyingRoute()){
 }
 function cc44Back(){
  const overlay=cc44TopOverlay(false),route=cc44UnderlyingRoute();
- if(overlay){if(history.state?.cc44&&history.state.route?.type==='overlay')history.back();else cc44CloseOverlay(overlay,true);return}
- cc44PrepareLeave(route,false);
- if(history.state?.cc44&&Number(history.state.depth)>0)history.back();else cc44FallbackBack(route);
+ if(overlay){cc44CloseOverlay(overlay,true);cc44CommitHistoryRoute(route,Math.max(0,(Number(history.state?.depth)||CC44_NAV.depth)-1),scrollY);return}
+ const target=cc44TrailBack(route)||cc44ParentRoute(route);if(!target)return;
+ cc44PrepareLeave(route,false);const depth=Math.max(0,(Number(history.state?.depth)||CC44_NAV.depth)-1);
+ cc44CommitHistoryRoute(target,depth,0);cc44Restore(target,0);
 }
 function cc44Home(){
- if(cc44TopOverlay(false))return;const route=cc44UnderlyingRoute();cc44PrepareLeave(route,true);const depth=Number(history.state?.depth)||0;
+ if(cc44TopOverlay(false))return;const route=cc44UnderlyingRoute();cc44PrepareLeave(route,true);const depth=Number(history.state?.depth)||0;cc44TrailReset({type:'intro'});
  if(history.state?.cc44&&depth>0)history.go(-depth);else cc44Restore({type:'intro'},0);
 }
 function cc44SyncControls(){
@@ -8185,7 +8223,7 @@ function cc44SyncControls(){
 }
 function cc44Init(){
  if(CC44_NAV.initialized)return;CC44_NAV.initialized=true;const route=cc44UnderlyingRoute();CC44_NAV.currentRoute=route;CC44_NAV.currentKey=cc44RouteKey(route);CC44_NAV.lastNonOverlay=route;
- try{history.replaceState({cc44:true,depth:0,route,scrollY:Math.max(0,Math.round(scrollY||0))},'',location.href)}catch(e){}
+ CC44_NAV.depth=0;cc44TrailReset(route);try{history.replaceState({cc44:true,depth:0,route,scrollY:Math.max(0,Math.round(scrollY||0))},'',location.href)}catch(e){}
  const observer=new MutationObserver(cc44ScheduleRoute);observer.observe(document.body,{subtree:true,childList:true,attributes:true,attributeFilter:['class']});
  document.addEventListener('click',event=>{
   cc44UpdateHistoryState();cc44WriteDraft();const button=event.target.closest?.('button,.crumb-link,[role="button"]'),action=button?.getAttribute?.('onclick')||'';
@@ -8197,7 +8235,12 @@ function cc44Init(){
   if(event.key!=='Escape')return;const overlay=cc44TopOverlay(true);if(!overlay)return;event.preventDefault();event.stopImmediatePropagation();
   if(history.state?.cc44&&history.state.route?.type==='overlay')history.back();else cc44CloseOverlay(overlay,true);
  },true);
- window.addEventListener('popstate',event=>{const current=cc44UnderlyingRoute();cc44PrepareLeave(current,false);const state=event.state;if(state?.cc44&&state.route)cc44Restore(state.route,state.scrollY||0);else cc44FallbackBack(current)});
+ window.addEventListener('popstate',event=>{
+  const overlay=cc44TopOverlay(false),current=cc44UnderlyingRoute();if(overlay){cc44CloseOverlay(overlay,true);cc44CommitHistoryRoute(current,Number(event.state?.depth)||0,scrollY);return}
+  const previousDepth=CC44_NAV.depth,nextDepth=Number(event.state?.depth),forward=event.state?.cc44&&Number.isFinite(nextDepth)&&nextDepth>previousDepth;
+  const target=forward&&event.state?.route?(cc44TrailPush(event.state.route),event.state.route):(cc44TrailBack(current)||cc44ParentRoute(current));
+  if(!target)return;cc44PrepareLeave(current,false);cc44CommitHistoryRoute(target,Number.isFinite(nextDepth)?nextDepth:Math.max(0,previousDepth-1),event.state?.scrollY||0);cc44Restore(target,event.state?.scrollY||0);
+ });
  let scrollTimer=0;window.addEventListener('scroll',()=>{clearTimeout(scrollTimer);scrollTimer=setTimeout(()=>{cc44UpdateHistoryState();cc44WriteDraft()},120)},{passive:true});
  window.addEventListener('pagehide',()=>{cc44WriteDraft();if(game)persistGame(false);if(generalExamState){cc24FreezeExam(generalExamState);saveActiveExam()}});
  cc44SyncControls();cc44WriteDraft(route);
